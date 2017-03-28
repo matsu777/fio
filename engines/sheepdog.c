@@ -32,8 +32,8 @@
 
 /******************************************************************************
    sheepdog libraries
-   taken from a part of fujita/tgt/usr/bs_sheepdog.c 
-   https://github.com/fujita/tgt 
+   taken from a part of fujita/tgt/usr/bs_sheepdog.c (partialy modified) 
+   https://github.com/fujita/tgt
 *******************************************************************************/
 #define SD_PROTO_VER 0x01
 
@@ -411,7 +411,6 @@ reconnect:
 			break;
 		}
 
-		log_info("connected to %s:%d\n", addr, port);
 		goto success;
 	}
 	fd = -1;
@@ -601,12 +600,18 @@ static int send_req(int sockfd, struct sheepdog_req *hdr, void *data,
 	return ret;
 }
 
+#define RETRY_OVER 10
 static int do_req(struct sheepdog_access_info *ai, struct sheepdog_req *hdr,
 		  void *data, unsigned int *wlen, unsigned int *rlen)
 {
-	int ret, sockfd, count = 0;
+	int ret = 0, sockfd, count = 0;
 
 retry:
+	if (count > RETRY_OVER) {
+		log_err("connecting to sheep process failed.\n");
+		return ret;
+	}
+
 	if (count++) {
 		log_err("retrying to reconnect (%d)\n", count);
 		if (0 <= sockfd)
@@ -623,7 +628,6 @@ retry:
 	if (ret)
 		goto retry;
 
-	/* FIXME: retrying COW request should be handled in graceful way */
 	ret = do_read(sockfd, hdr, sizeof(*hdr));
 	if (ret)
 		goto retry;
@@ -863,11 +867,6 @@ static int is_refresh_required(struct sheepdog_access_info *ai)
 	char dummy;
 	int need_reload_inode = 0;
 
-	/*
-	 * Check inode of this tgtd is invaldiated or not.
-	 * The inode object is the only one object which always exists.
-	 */
-
 	read_object(ai, &dummy, inode_oid, ai->inode.nr_copies, sizeof(dummy),
 		    0, &need_reload_inode);
 
@@ -933,18 +932,13 @@ retry:
 		old_oid = 0;
 
 		if (write) {
-			/*
-			 * tgt doesn't affect semantics of caching, so we can
-			 * always turn on cache of sheep layer
-			 */
-			flags = SD_FLAG_CMD_CACHE;
+			flags = SD_FLAG_CMD_DIRECT;
 			create = 0;
 
 			if (ai->inode.data_vdi_id[idx] != vid) {
 				create = 1;
 
 				if (ai->inode.data_vdi_id[idx]) {
-					/* COW */
 					old_oid = oid;
 					flags |= SD_FLAG_CMD_COW;
 				}
@@ -960,11 +954,6 @@ retry:
 					   old_oid, flags, &need_reload_inode);
 			if (!ret) {
 				if (need_reload_inode) {
-					/* If need_reload_inode is 1,
-					 * snapshot was created.
-					 * If it is 2, inode object is
-					 * invalidated
-					 */
 					ret = reload_inode(ai,
 						   need_reload_inode == 1);
 					if (!ret)
@@ -999,7 +988,6 @@ retry:
 					goto reload_in_read_path;
 				}
 			}
-
 			need_reload_inode = 0;
 			ret = read_object(ai, buf + (len - rest),
 					  oid, nr_copies, size,
@@ -1083,6 +1071,7 @@ static int sd_open(struct sheepdog_access_info *ai, char *filename, int flags)
 	int ret = 0, i, len, fd, need_reload = 0;
 	uint32_t vid = 0;
 	char *orig_filename;
+	char tag[] = "";
 
 	char vdi_name[SD_MAX_VDI_LEN + 1];
 	char *saveptr = NULL, *result;
@@ -1174,12 +1163,6 @@ static int sd_open(struct sheepdog_access_info *ai, char *filename, int flags)
 		goto out;
 	}
 
-	log_info("protocol: %s\n", ai->is_unix ? "unix" : "tcp");
-	if (ai->is_unix)
-		log_info("path of unix domain socket: %s\n", ai->uds_path);
-	else
-		log_info("hostname: %s, port: %d\n", ai->hostname, ai->port);
-
 	/*
 	 * test connection for validating command line option
 	 *
@@ -1192,7 +1175,7 @@ static int sd_open(struct sheepdog_access_info *ai, char *filename, int flags)
 
 	if (fd < 0) {
 		log_err("connecting to sheep process failed, "\
-			"please verify the --backing-store option: %s",
+			"please verify the -target option: %s",
 			orig_filename);
 		ret = -1;
 		goto out;
@@ -1200,8 +1183,7 @@ static int sd_open(struct sheepdog_access_info *ai, char *filename, int flags)
 
 	close(fd);		/* we don't need this connection */
 
-	log_info("VDI name: %s\n", vdi_name);
-	ret = find_vdi_name(ai, vdi_name, 0, "", &vid, 0);
+	ret = find_vdi_name(ai, vdi_name, 0, tag, &vid, 0);
 	if (ret)
 		goto out;
 
@@ -1249,13 +1231,7 @@ static void sd_close(struct sheepdog_access_info *ai)
 
 #define LAST_POS(f)     ((f)->engine_data)
 
-struct fio_sheepdog_iou {
-        struct io_u *io_u;
-        int io_complete;
-};
-
 struct sheepdog_data {
-        struct io_u **aio_events;
 	struct sheepdog_access_info *ai;
 };
 
@@ -1280,89 +1256,10 @@ static struct fio_option options[] = {
 };
 
 
-static struct io_u *fio_sheepdog_event(struct thread_data *td, int event)
-{
-	struct sheepdog_data *sd = td->io_ops_data;
-	dprint(FD_IO, "%s\n", __FUNCTION__);
-	return sd->aio_events[event];
-
-}
-
-
-static int fio_sheepdog_getevents(struct thread_data *td, unsigned int min,
-                                  unsigned int max, const struct timespec *t)
-{
-        struct sheepdog_data *sd = td->io_ops_data;
-        unsigned int events = 0;
-        struct io_u *io_u;
-        int i;
-
-        dprint(FD_IO, "%s\n", __FUNCTION__);
-        do {
-                io_u_qiter(&td->io_u_all, io_u, i) {
-                        struct fio_sheepdog_iou *io;
-
-                        if (!(io_u->flags & IO_U_F_FLIGHT))
-                                continue;
-
-                        io = io_u->engine_data;
-                        if (io->io_complete) {
-                                io->io_complete = 0;
-                                sd->aio_events[events] = io_u;
-                                events++;
-
-                                if (events >= max)
-                                        break;
-                        }
-
-                }
-                if (events < min)
-                        usleep(100);
-                else
-                        break;
-
-        } while (1);
-
-        return events;
-
-        return 0;
-}
-
-static void fio_sheepdog_io_u_free(struct thread_data *td, struct io_u *io_u)
-{
-        struct fio_sheepdog_iou *io = io_u->engine_data;
-
-        if (io) {
-                if (io->io_complete)
-                        log_err("incomplete IO found.\n");
-                io_u->engine_data = NULL;
-                free(io);
-        }
-}
-
-static int fio_sheepdog_io_u_init(struct thread_data *td, struct io_u *io_u)
-{
-        dprint(FD_FILE, "%s\n", __FUNCTION__);
-
-        if (!io_u->engine_data) {
-                struct fio_sheepdog_iou *io;
-
-                io = malloc(sizeof(struct fio_sheepdog_iou));
-                if (!io) {
-                        td_verror(td, errno, "malloc");
-                        return 1;
-                }
-                io->io_complete = 0;
-                io->io_u = io_u;
-                io_u->engine_data = io;
-        }
-        return 0;
-}
 
 static int fio_sheepdog_queue(struct thread_data *td, struct io_u *io_u)
 {
         struct sheepdog_data *sd = td->io_ops_data;
-	struct fio_sheepdog_iou *iou = io_u->engine_data;
         int ret = 0;
 
         dprint(FD_IO, "%s op %s\n", __FUNCTION__, io_ddir_name(io_u->ddir));
@@ -1385,50 +1282,84 @@ static int fio_sheepdog_queue(struct thread_data *td, struct io_u *io_u)
 		return FIO_Q_COMPLETED;
 	}
 
-	iou->io_complete = 1;
+	if (io_u->file && io_u->xfer_buflen >= 0 && ddir_rw(io_u->ddir))
+                LAST_POS(io_u->file) = io_u->offset + io_u->xfer_buflen;
 
-	return FIO_Q_QUEUED;
+	return FIO_Q_COMPLETED;
+}
+
+static int fio_sheepdog_prep(struct thread_data *td, struct io_u *io_u)
+{
+        struct fio_file *f = io_u->file;
+        
+	if (!ddir_rw(io_u->ddir))
+                return 0;
+        if (LAST_POS(f) != -1ULL && LAST_POS(f) == io_u->offset)
+                return 0;
+
+	return 0;
+
 }
 
 static int fio_sheepdog_init(struct thread_data *td)
 {
-        struct sheepdog_data *sd = NULL;
-        struct sheepdog_options *opt = td->eo;
+	struct sheepdog_data *sd;
+	struct sheepdog_options *opt = td->eo;
+	int ret = 0;
         
 	if (td->io_ops_data)
-                return 0;
+		return 0;
 
-        sd = malloc(sizeof(struct sheepdog_data));
-        if (!sd) {
-                log_err("malloc failed.\n");
-                return -ENOMEM;
-        } 
-        sd->aio_events = NULL;
+	sd = calloc(1, sizeof(*sd));
+	if (!sd) {
+		log_err("malloc failed.\n");
+		return -ENOMEM;
+	} 
 
 	sd->ai = malloc(sizeof(struct sheepdog_access_info));
-        if (!sd->ai) {
-                log_err("malloc failed.\n");
+	if (!sd->ai) {
+		log_err("malloc failed.\n");
 		free(sd);
-                return -ENOMEM;
-        } 
+		return -ENOMEM;
+	}
 
 	INIT_LIST_HEAD(&sd->ai->fd_list_head);
 	pthread_rwlock_init(&sd->ai->fd_list_lock, NULL);
 	pthread_rwlock_init(&sd->ai->inode_lock, NULL);
 	pthread_mutex_init(&sd->ai->inode_version_mutex, NULL);
 
-	sd_open(sd->ai, opt->target, 0);
+	ret = sd_open(sd->ai, opt->target, 0);
+
+	if (ret) {
+		sd_close(sd->ai);
+		free(sd->ai);
+		free(sd);
+		return ret;
+	} else {
+		log_info("Job No.%d, connected to target: %s\n", td->thread_number, opt->target);
+	}
 
 	td->io_ops_data = sd;
-	td->o.use_thread = 1;
-	sd->aio_events = calloc(td->o.iodepth, sizeof(struct io_u *));
 
-	return 0;
+	sd_close(sd->ai);
+
+	return ret;
 }
 
 static void fio_sheepdog_cleanup(struct thread_data *td)
 {
 	struct sheepdog_data *sd = td->io_ops_data;
+	struct sheepdog_fd_list *p, *next;
+
+        list_for_each_entry_safe(p, next, &sd->ai->fd_list_head, list) {
+                close(p->fd);
+                list_del(&p->list);
+                free(p);
+        }
+
+        pthread_rwlock_destroy(&sd->ai->fd_list_lock);
+        pthread_rwlock_destroy(&sd->ai->inode_lock);
+
 
 	sd_close(sd->ai);
 
@@ -1438,21 +1369,57 @@ static void fio_sheepdog_cleanup(struct thread_data *td)
 	td->io_ops_data = NULL;
 }
 
+#define READFILE_BLOCK_SIZE 4194304
+static int fio_sheepdog_open(struct thread_data *td, struct fio_file *f)
+{
+
+	struct sheepdog_data *sd = td->io_ops_data;
+        unsigned long long left, offset;
+        unsigned int bs;
+        char *b;
+        int ret;
+
+	if (td_read(td)) {
+		bs = READFILE_BLOCK_SIZE;
+		b = malloc(bs);
+		left = f->real_file_size;
+		offset = 0;		
+
+		while(left && !td->terminate) {
+			if(bs > left)
+				bs = left;
+			fill_io_buffer(td, b, bs, bs);
+			ret = sd_io(sd->ai, 1, b, bs, offset);
+			if(ret)
+				return ret;
+			offset += bs;
+			left -= bs;
+		}
+		free(b);
+		fio_time_init();
+	}
+
+	return 0;
+}
+
+static int fio_sheepdog_close(struct thread_data *td, struct fio_file *f)
+{
+	return 0;
+}
+
+
 struct ioengine_ops ioengine = {
 	.name		= "sheepdog",
 	.version	= FIO_IOOPS_VERSION,
 	.init		= fio_sheepdog_init,
+	.prep		= fio_sheepdog_prep,
 	.queue		= fio_sheepdog_queue,
-	.getevents	= fio_sheepdog_getevents,
-	.event		= fio_sheepdog_event,
 	.cleanup	= fio_sheepdog_cleanup,
-	.open_file	= generic_open_file,
-	.close_file	= generic_close_file,
-        .io_u_init = fio_sheepdog_io_u_init,
-        .io_u_free = fio_sheepdog_io_u_free,
+	.open_file	= fio_sheepdog_open,
+	.close_file	= fio_sheepdog_close,
 	.options                = options,
         .option_struct_size     = sizeof(struct sheepdog_options),
-
+	.flags = FIO_SYNCIO | FIO_DISKLESSIO,
 };
 
 static void fio_init fio_sheepdog_register(void)

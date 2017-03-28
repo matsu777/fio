@@ -1834,23 +1834,12 @@ echo "march_armv8_a_crc_crypto      $march_armv8_a_crc_crypto"
 # check for sheepdog
 sheepdog="no"
 cat > $TMPC << EOF
-#include <rbd/librbd.h>
-
-int main(int argc, char **argv)
+int main(void)
 {
-
-  rados_t cluster;
-  rados_ioctx_t io_ctx;
-  const char pool[] = "rbd";
-
-  int major, minor, extra;
-  rbd_version(&major, &minor, &extra);
-
-  rados_ioctx_create(cluster, pool, &io_ctx);
   return 0;
 }
 EOF
-if test "$disable_sheepdog" != "yes"; then
+if test "$disable_sheepdog" != "yes" && compile_prog "" "" ""; then
   sheepdog="yes"
 fi
 echo "Sheepdog engine               $sheepdog"
