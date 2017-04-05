@@ -25,7 +25,7 @@
 #include "debug.h"
 #include "file.h"
 #include "io_ddir.h"
-#include "ioengine.h"
+#include "ioengines.h"
 #include "iolog.h"
 #include "helpers.h"
 #include "options.h"
@@ -39,6 +39,7 @@
 #include "server.h"
 #include "stat.h"
 #include "flow.h"
+#include "io_u.h"
 #include "io_u_queue.h"
 #include "workqueue.h"
 #include "steadystate.h"
@@ -74,7 +75,7 @@ enum {
 	TD_F_VER_NONE		= 1U << 5,
 	TD_F_PROFILE_OPS	= 1U << 6,
 	TD_F_COMPRESS		= 1U << 7,
-	TD_F_NOIO		= 1U << 8,
+	TD_F_RESERVED		= 1U << 8, /* not used */
 	TD_F_COMPRESS_LOG	= 1U << 9,
 	TD_F_VSTATE_SAVED	= 1U << 10,
 	TD_F_NEED_LOCK		= 1U << 11,
@@ -121,7 +122,6 @@ enum {
  * Per-thread/process specific data. Only used for the network client
  * for now.
  */
-struct sk_out;
 void sk_out_assign(struct sk_out *);
 void sk_out_drop(void);
 
@@ -231,6 +231,7 @@ struct thread_data {
 	 * to any of the available IO engines.
 	 */
 	struct ioengine_ops *io_ops;
+	int io_ops_init;
 
 	/*
 	 * IO engine private data and dlhandle.
@@ -490,7 +491,7 @@ static inline int should_fsync(struct thread_data *td)
 {
 	if (td->last_was_sync)
 		return 0;
-	if (td_write(td) || td_rw(td) || td->o.override_sync)
+	if (td_write(td) || td->o.override_sync)
 		return 1;
 
 	return 0;

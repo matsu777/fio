@@ -32,7 +32,6 @@
 #define FIO_HAVE_HUGETLB
 #define FIO_HAVE_RAWBIND
 #define FIO_HAVE_BLKTRACE
-#define FIO_HAVE_PSHARED_MUTEX
 #define FIO_HAVE_CL_SIZE
 #define FIO_HAVE_CGROUPS
 #define FIO_HAVE_FS_STAT
@@ -349,5 +348,10 @@ static inline ssize_t pwritev2(int fd, const struct iovec *iov, int iovcnt,
 }
 #endif /* __NR_preadv2 */
 #endif /* CONFIG_PWRITEV2 */
+
+static inline int shm_attach_to_open_removed(void)
+{
+	return 1;
+}
 
 #endif

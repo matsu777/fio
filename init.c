@@ -356,9 +356,8 @@ static int setup_thread_area(void)
 		perror("shmat");
 		return 1;
 	}
-#ifdef FIO_HAVE_SHM_ATTACH_REMOVED
-	shmctl(shm_id, IPC_RMID, NULL);
-#endif
+	if (shm_attach_to_open_removed())
+		shmctl(shm_id, IPC_RMID, NULL);
 #endif
 
 	memset(threads, 0, max_jobs * sizeof(struct thread_data));
@@ -460,6 +459,7 @@ static struct thread_data *get_new_job(bool global, struct thread_data *parent,
 		copy_opt_list(td, parent);
 
 	td->io_ops = NULL;
+	td->io_ops_init = 0;
 	if (!preserve_eo)
 		td->eo = NULL;
 
@@ -587,7 +587,7 @@ static int fixup_options(struct thread_data *td)
 	struct thread_options *o = &td->o;
 	int ret = 0;
 
-#ifndef FIO_HAVE_PSHARED_MUTEX
+#ifndef CONFIG_PSHARED
 	if (!o->use_thread) {
 		log_info("fio: this platform does not support process shared"
 			 " mutexes, forcing use of threads. Use the 'thread'"
@@ -620,7 +620,7 @@ static int fixup_options(struct thread_data *td)
 	/*
 	 * Reads can do overwrites, we always need to pre-create the file
 	 */
-	if (td_read(td) || td_rw(td))
+	if (td_read(td))
 		o->overwrite = 1;
 
 	if (!o->min_bs[DDIR_READ])
@@ -765,7 +765,8 @@ static int fixup_options(struct thread_data *td)
 	}
 
 	if (o->pre_read) {
-		o->invalidate_cache = 0;
+		if (o->invalidate_cache)
+			o->invalidate_cache = 0;
 		if (td_ioengine_flagged(td, FIO_PIPEIO)) {
 			log_info("fio: cannot pre-read files with an IO engine"
 				 " that isn't seekable. Pre-read disabled.\n");
@@ -1117,7 +1118,7 @@ static char *make_filename(char *buf, size_t buf_size,struct thread_options *o,
 
 	if (!o->filename_format || !strlen(o->filename_format)) {
 		sprintf(buf, "%s.%d.%d", jobname, jobnum, filenum);
-		return NULL;
+		return buf;
 	}
 
 	for (f = &fpre_keywords[0]; f->keyword; f++)
@@ -1531,10 +1532,10 @@ static int add_job(struct thread_data *td, const char *jobname, int job_add_num,
 							ddir_str(o->td_ddir));
 
 				if (o->bs_is_seq_rand)
-					log_info("bs=%s-%s,%s-%s, bs_is_seq_rand, ",
+					log_info("bs=(R) %s-%s, (W) %s-%s, bs_is_seq_rand, ",
 							c1, c2, c3, c4);
 				else
-					log_info("bs=%s-%s,%s-%s,%s-%s, ",
+					log_info("bs=(R) %s-%s, (W) %s-%s, (T) %s-%s, ",
 							c1, c2, c3, c4, c5, c6);
 
 				log_info("ioengine=%s, iodepth=%u\n",

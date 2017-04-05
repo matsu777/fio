@@ -1,19 +1,25 @@
-#####
-#expected form of target:
-#unix:<path_of_unix_domain_socket>:<vdi_name>
-#tcp:<sheepdog_host>:<sheepdog_port>:<vdi>
-#e.g. target=tcp:127.0.0.1:7000:testvdi
-#####
+#################################################
+#                                               #
+# Example of using ioengine for sheepdog's VDI  #
+#                                               #
+# [expected form of target]                     #
+# tcp:<sheepdog_host>:<sheepdog_port>:<vdiname> #
+#  e.g. target=tcp:127.0.0.1:7000:testvdi       #
+#  e.g. target=tcp:localhost:7001:vdi2          #                                     
+#                                               #
+#################################################
 [global]
 ioengine=sheepdog
+#sheepdog engine's specific option#
 target=tcp:localhost:7000:testvdi
+###################################
 kb_base=1024
 direct=1
 invalidate=1
 group_reporting
 
 [sheepdog_test]
-rw=read
+rw=randread
 size=1000M
-numjobs=8
-bs=4k
+numjobs=4
+bs=1M

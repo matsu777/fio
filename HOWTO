@@ -543,6 +543,8 @@ Parameter types
 
 	If the option accepts an upper and lower range, use a colon ':' or
 	minus '-' to separate such values. See :ref:`irange <irange>`.
+	If the lower value specified happens to be larger than the upper value,
+	two values are swapped.
 
 .. _bool:
 
@@ -886,7 +888,8 @@ Target file/device
 	If this isn't set, fio will abort jobs that are destructive (e.g. that write)
 	to what appears to be a mounted device or partition. This should help catch
 	creating inadvertently destructive tests, not realizing that the test will
-	destroy data on the mounted file system. Default: false.
+	destroy data on the mounted file system. Note that some platforms don't allow
+	writing against a mounted device regardless of this option. Default: false.
 
 .. option:: pre_read=bool
 
@@ -1099,13 +1102,15 @@ I/O type
 	blocks given. For example, if you give 32 as a parameter, fio will sync the
 	file for every 32 writes issued. If fio is using non-buffered I/O, we may
 	not sync the file. The exception is the sg I/O engine, which synchronizes
-	the disk cache anyway.
+	the disk cache anyway. Defaults to 0, which means no sync every certain
+	number of writes.
 
 .. option:: fdatasync=int
 
 	Like :option:`fsync` but uses :manpage:`fdatasync(2)` to only sync data and
-	not metadata blocks.  In FreeBSD and Windows there is no
+	not metadata blocks.  In Windows, FreeBSD, and DragonFlyBSD there is no
 	:manpage:`fdatasync(2)`, this falls back to using :manpage:`fsync(2)`.
+	Defaults to 0, which means no sync data every certain number of writes.
 
 .. option:: write_barrier=int
 
@@ -1426,7 +1431,9 @@ Buffers and memory
 .. option:: invalidate=bool
 
 	Invalidate the buffer/page cache parts for this file prior to starting
-	I/O. Defaults to true.
+	I/O if the platform and file type support it. Defaults to true.
+	This will be ignored if :option:`pre_read` is also specified for the
+	same job.
 
 .. option:: sync=bool
 
@@ -1513,7 +1520,7 @@ I/O size
 	Fio will divide this size between the available files determined by options
 	such as :option:`nrfiles`, :option:`filename`, unless :option:`filesize` is
 	specified by the job. If the result of division happens to be 0, the size is
-	set to the physical size of the given files or devices.
+	set to the physical size of the given files or devices if they exist.
 	If this option is not specified, fio will use the full size of the given
 	files or devices.  If the files do not exist, size must be given. It is also
 	possible to give size as a percentage between 1 and 100. If ``size=20%`` is
@@ -1568,6 +1575,7 @@ I/O engine
 		**sync**
 			Basic :manpage:`read(2)` or :manpage:`write(2)`
 			I/O. :manpage:`lseek(2)` is used to position the I/O location.
+			See :option:`fsync` and :option:`fdatasync` for syncing write I/Os.
 
 		**psync**
 			Basic :manpage:`pread(2)` or :manpage:`pwrite(2)` I/O.  Default on
@@ -1719,7 +1727,7 @@ I/O engine
 		**sheepdog**
 			IO  engine  supporting  direct access to a virtual disk image (VDI)
 			of the distributed block  storage "sheepdog".
-			This ioengine defines engine specific
+			This ioengine defines engine specific options.
 
 		**external**
 			Prefix to specify loading an external I/O engine object file. Append
@@ -1750,7 +1758,8 @@ caveat that when used on the command line, they must come after the
 
 .. option:: cpuload=int : [cpuio]
 
-	Attempt to use the specified percentage of CPU cycles.
+	Attempt to use the specified percentage of CPU cycles. This is a mandatory
+	option when using cpuio I/O engine.
 
 .. option:: cpuchunks=int : [cpuio]
 
@@ -2367,6 +2376,18 @@ Verification
 		**sha1**
 			Use optimized sha1 as the checksum function.
 
+		**sha3-224**
+			Use optimized sha3-224 as the checksum function.
+
+		**sha3-256**
+			Use optimized sha3-256 as the checksum function.
+
+		**sha3-384**
+			Use optimized sha3-384 as the checksum function.
+
+		**sha3-512**
+			Use optimized sha3-512 as the checksum function.
+
 		**meta**
 			This option is deprecated, since now meta information is included in
 			generic verification header and meta verification happens by
@@ -2589,6 +2610,12 @@ Measurements and reporting
 	Start a new reporting group. See: :option:`group_reporting`.  If not given,
 	all jobs in a file will be part of the same reporting group, unless
 	separated by a :option:`stonewall`.
+
+.. option:: stats
+
+	By default, fio collects and shows final output results for all jobs
+	that run. If this option is set to 0, then fio will ignore it in
+	the final stat output.
 
 .. option:: write_bw_log=str
 

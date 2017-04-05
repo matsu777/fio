@@ -22,11 +22,9 @@
 #define FIO_USE_GENERIC_INIT_RANDOM_STATE
 #define FIO_HAVE_FS_STAT
 #define FIO_HAVE_GETTID
+#define FIO_HAVE_SHM_ATTACH_REMOVED
 
 #undef	FIO_HAVE_CPU_AFFINITY	/* XXX notyet */
-
-/* Only OpenBSD 5.1 and above have attach-to-open-removed semantics */
-#undef  FIO_HAVE_SHM_ATTACH_REMOVED
 
 #define OS_MAP_ANON		MAP_ANON
 
@@ -55,7 +53,7 @@ static inline int blockdev_size(struct fio_file *f, unsigned long long *bytes)
 
 static inline int blockdev_invalidate_cache(struct fio_file *f)
 {
-	return EINVAL;
+	return ENOTSUP;
 }
 
 static inline unsigned long long os_phys_mem(void)
@@ -89,5 +87,13 @@ static inline unsigned long long get_fs_free_size(const char *path)
 #ifdef MADV_FREE
 #define FIO_MADV_FREE	MADV_FREE
 #endif
+
+static inline int shm_attach_to_open_removed(void)
+{
+	/*
+	 * XXX: Return 1 if >= OpenBSD 5.1 according to 97900ebf.
+	 */
+	return 0;
+}
 
 #endif
