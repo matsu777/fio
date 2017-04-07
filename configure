@@ -186,6 +186,8 @@ for opt do
   ;;
   --disable-pmem) disable_pmem="yes"
   ;;
+  --disable-sheepdog) disable_sheepdog="yes"
+  ;;
   --help)
     show_help="yes"
     ;;
@@ -214,6 +216,7 @@ if test "$show_help" = "yes" ; then
   echo "--enable-lex            Enable use of lex/yacc for math"
   echo "--disable-shm           Disable SHM support"
   echo "--disable-optimizations Don't enable compiler optimizations"
+  echo "--disable-sheepdog     Disable sheepdog support"
   exit $exit_val
 fi
 
@@ -1990,6 +1993,14 @@ EOF
 fi
 echo "march_armv8_a_crc_crypto      $march_armv8_a_crc_crypto"
 
+##########################################
+# check for sheepdog
+sheepdog="no"
+if test "$disable_sheepdog" != "yes"; then
+  sheepdog="yes"
+fi
+echo "Sheepdog engine               $sheepdog"
+
 
 #############################################################################
 
@@ -2213,6 +2224,10 @@ fi
 
 if test "$zlib" = "no" ; then
   echo "Consider installing zlib-dev (zlib-devel), some fio features depend on it."
+fi
+
+if test "$sheepdog" = "yes" ; then
+  output_sym "CONFIG_SHEEPDOG"
 fi
 
 echo "LIBS+=$LIBS" >> $config_host_mak
